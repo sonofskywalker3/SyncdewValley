@@ -1001,7 +1001,7 @@ function Invoke-PushSaves {
     foreach ($localSave in Get-ChildItem $SAVES_DIR -Directory) {
         Write-Host "  Pushing: $($localSave.Name)/"
 
-        # Verify save exists on device (don't create new saves)
+        # Check if save exists on device; create folder if missing
         $deviceSaves = Device-ListDir -Transport $Transport -Segments $SAVES_SEGMENTS
         $exists = $false
         foreach ($ds in $deviceSaves) {
@@ -1009,8 +1009,14 @@ function Invoke-PushSaves {
         }
 
         if (-not $exists) {
-            Write-Warn "    Save '$($localSave.Name)' doesn't exist on device, skipping"
-            continue
+            if ($Transport.CanAdbFiles) {
+                $savePath = "$ADB_GAME_ROOT/Saves/$($localSave.Name)"
+                try { & $ADB shell "mkdir -p '$savePath'" 2>&1 | Out-Null } catch { }
+                Write-Dim "    Created save folder on device"
+            } else {
+                Write-Warn "    Save '$($localSave.Name)' doesn't exist on device, skipping"
+                continue
+            }
         }
 
         Device-PushFolder -Transport $Transport -Segments ($SAVES_SEGMENTS + @($localSave.Name)) -LocalDir $localSave.FullName | Out-Null
