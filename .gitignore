@@ -1,0 +1,9 @@
+# Sync data (saves, mods, configs, APKs — large binary/per-user data)
+sync/saves/
+sync/mods/
+sync/configs/
+sync/apks/
+sync/saves.bak/
+sync/downloads/
+sync/.device_profiles.json
+sync/.last_sync
