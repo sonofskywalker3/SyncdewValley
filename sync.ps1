@@ -87,8 +87,8 @@ $MOD_SEGMENTS = $GAME_ROOT_SEGMENTS + @("Mods", "AndroidConsolizer")
 $LOG_SEGMENTS = $GAME_ROOT_SEGMENTS + @("ErrorLogs")
 $SMAPI_SEGMENTS = $GAME_ROOT_SEGMENTS + @("Stardew Assemblies", "smapi-internal")
 
-# ADB game root path (double-slash for Git Bash compatibility)
-$ADB_GAME_ROOT = "/sdcard/Android/data/abc.smapi.gameloader/files"
+# ADB game root path — use /storage/emulated/0/ (NEVER /sdcard/)
+$ADB_GAME_ROOT = "/storage/emulated/0/Android/data/abc.smapi.gameloader/files"
 
 # =============================================================================
 # Output Helpers
@@ -1902,11 +1902,11 @@ function Invoke-SmapiInstall {
     }
 
     $zip = $zips[0]
-    Write-Host "Pushing: $($zip.Name) to device /sdcard/Download/..."
+    Write-Host "Pushing: $($zip.Name) to device /storage/emulated/0/Download/..."
 
     if (-not $script:DryRun) {
         if ($Transport.CanAdbFiles) {
-            & $ADB push $zip.FullName "/sdcard/Download/$($zip.Name)" 2>&1 | Out-Null
+            & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null
         }
         elseif ($Transport.MtpDevice) {
             $dlFolder = Navigate-MtpPath -StartFolder $Transport.MtpStorage.GetFolder -Segments @("Download")
