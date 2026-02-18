@@ -497,7 +497,7 @@ function Device-PullFile {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        & $ADB pull "$path/$Name" "$LocalDest" 2>&1 | Out-Null
+        try { & $ADB pull "$path/$Name" "$LocalDest" 2>&1 | Out-Null } catch { }
         return (Test-Path $LocalDest)
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -527,7 +527,7 @@ function Device-PushFile {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        & $ADB push "$LocalPath" "$path/$name" 2>&1 | Out-Null
+        try { & $ADB push "$LocalPath" "$path/$name" 2>&1 | Out-Null } catch { }
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -555,7 +555,7 @@ function Device-PullFolder {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        & $ADB pull "$path/" "$LocalDest/" 2>&1 | Out-Null
+        try { & $ADB pull "$path/" "$LocalDest/" 2>&1 | Out-Null } catch { }
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -579,7 +579,7 @@ function Device-PushFolder {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        & $ADB push "$LocalDir/" "$path/" 2>&1 | Out-Null
+        try { & $ADB push "$LocalDir/" "$path/" 2>&1 | Out-Null } catch { }
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -1906,7 +1906,7 @@ function Invoke-SmapiInstall {
 
     if (-not $script:DryRun) {
         if ($Transport.CanAdbShell) {
-            & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null
+            try { & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null } catch { }
         }
         elseif ($Transport.MtpDevice) {
             $dlFolder = Navigate-MtpPath -StartFolder $Transport.MtpStorage.GetFolder -Segments @("Download")
