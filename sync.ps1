@@ -1240,8 +1240,11 @@ function Invoke-SaveSync {
                 $choice = Read-Host "    -> Only exists locally. Push to device? [y/N]"
                 if ($choice -ne "y") { continue }
             } else {
-                Write-Dim "    -> Skipping (only local, not on device)"
-                continue
+                Write-Host "    -> Pushing (only local, creating on device)"
+            }
+            if ($Transport.CanAdbFiles) {
+                $savePath = "$ADB_GAME_ROOT/Saves/$name"
+                try { & $ADB shell "mkdir -p '$savePath'" 2>&1 | Out-Null } catch { }
             }
             Device-PushFolder -Transport $Transport -Segments ($SAVES_SEGMENTS + @($name)) -LocalDir $localDir | Out-Null
             $synced++
@@ -1251,9 +1254,9 @@ function Invoke-SaveSync {
                 $choice = Read-Host "    -> Only exists on device. Pull to local? [y/N]"
                 if ($choice -ne "y") { continue }
             } else {
-                Write-Dim "    -> Skipping (only on device, not local)"
-                continue
+                Write-Host "    -> Pulling (only on device, creating locally)"
             }
+            New-Item -ItemType Directory -Path $localDir -Force | Out-Null
             Device-PullFolder -Transport $Transport -Segments ($SAVES_SEGMENTS + @($name)) -LocalDest $localDir | Out-Null
             $synced++
         }
