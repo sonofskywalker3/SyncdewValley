@@ -2024,10 +2024,10 @@ function Invoke-Bootstrap {
         $apks = Get-ChildItem $sdvDir -Filter "*.apk" | ForEach-Object { $_.FullName }
         if ($apks.Count -gt 1) {
             Write-Host "Installing Stardew Valley (split APK, $($apks.Count) parts)..."
-            & $ADB install-multiple @apks 2>&1
+            try { & $ADB install-multiple @apks 2>&1 } catch { }
         } elseif ($apks.Count -eq 1) {
             Write-Host "Installing Stardew Valley..."
-            & $ADB install $apks[0] 2>&1
+            try { & $ADB install $apks[0] 2>&1 } catch { }
         }
     } else {
         Write-Dim "Stardew Valley already installed."
@@ -2036,16 +2036,16 @@ function Invoke-Bootstrap {
     # 2. Install SMAPI Launcher
     $apk = Get-ChildItem $smapiLauncherDir -Filter "*.apk" | Select-Object -First 1
     Write-Host "Installing SMAPI Launcher..."
-    & $ADB install $apk.FullName 2>&1
+    try { & $ADB install $apk.FullName 2>&1 } catch { }
 
     # 3. Push SMAPI installer zip to Download
     $zip = Get-ChildItem $smapiInstallDir -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     Write-Host "Pushing $($zip.Name) to /storage/emulated/0/Download/..."
-    & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null
+    try { & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null } catch { }
 
     # 4. Launch SMAPI Launcher for user to tap Install
     Write-Host "Launching SMAPI Launcher..."
-    & $ADB shell monkey -p $PACKAGE -c android.intent.category.LAUNCHER 1 2>&1 | Out-Null
+    try { & $ADB shell monkey -p $PACKAGE -c android.intent.category.LAUNCHER 1 2>&1 | Out-Null } catch { }
 
     Write-Host ""
     Write-Warn "Tap 'Install' in the SMAPI Launcher to complete SMAPI installation."
