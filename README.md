@@ -82,12 +82,26 @@ SyncdewValley/
     downloads/          # Temp dir for mod downloads
 ```
 
-## Requirements
+## Prerequisites
+
+You'll need the game, SMAPI, and ADB installed before this tool is useful.
+
+### Get the game and mods
+
+| What | Where |
+|------|-------|
+| Stardew Valley | [Google Play Store](https://play.google.com/store/apps/details?id=com.chucklefish.stardewvalley) |
+| SMAPI (Stardew Modding API) | [GitHub](https://github.com/Pathoschild/SMAPI) &mdash; [smapi.io](https://smapi.io/) |
+| SMAPI Android Installer | [GitHub](https://github.com/ZaneYork/SMAPI-Android-Installer) |
+| AndroidConsolizer (console-style controls) | [Nexus Mods](https://www.nexusmods.com/stardewvalley/mods/41869) &mdash; [GitHub](https://github.com/sonofskywalker3/AndroidConsolizer) |
+| Mods in general | [Nexus Mods - Stardew Valley](https://www.nexusmods.com/stardewvalley) |
+
+### System requirements
 
 - Windows with PowerShell 5.1+
 - [ADB (platform-tools)](https://developer.android.com/tools/releases/platform-tools) installed at `C:\Program Files\platform-tools\`
 - USB connection to Android device in File Transfer mode
-- For mod updates: Nexus API key at `~/.nexus_api_key` (optional, enables auto-download for Premium users)
+- For mod auto-download: Nexus API key at `~/.nexus_api_key` (optional, enables download for Premium users)
 
 ## Mod Update Checking
 
