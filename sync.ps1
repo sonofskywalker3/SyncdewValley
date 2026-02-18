@@ -1905,7 +1905,7 @@ function Invoke-SmapiInstall {
     Write-Host "Pushing: $($zip.Name) to device /storage/emulated/0/Download/..."
 
     if (-not $script:DryRun) {
-        if ($Transport.CanAdbFiles) {
+        if ($Transport.CanAdbShell) {
             & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null
         }
         elseif ($Transport.MtpDevice) {
