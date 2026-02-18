@@ -497,7 +497,11 @@ function Device-PullFile {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        try { & $ADB pull "$path/$Name" "$LocalDest" 2>&1 | Out-Null } catch { }
+        $output = & $ADB pull "$path/$Name" "$LocalDest" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "ADB pull failed: $output"
+            return $false
+        }
         return (Test-Path $LocalDest)
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -527,7 +531,11 @@ function Device-PushFile {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        try { & $ADB push "$LocalPath" "$path/$name" 2>&1 | Out-Null } catch { }
+        $output = & $ADB push "$LocalPath" "$path/$name" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "ADB push failed: $output"
+            return $false
+        }
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -555,7 +563,11 @@ function Device-PullFolder {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        try { & $ADB pull "$path/" "$LocalDest/" 2>&1 | Out-Null } catch { }
+        $output = & $ADB pull "$path/" "$LocalDest/" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "ADB pull failed: $output"
+            return $false
+        }
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -580,8 +592,12 @@ function Device-PushFolder {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
         # Clear target first — adb push nests dir inside existing dir, causing double-nesting
-        try { & $ADB shell "rm -rf '$path'" 2>&1 | Out-Null } catch { }
-        try { & $ADB push "$LocalDir" "$path" 2>&1 | Out-Null } catch { }
+        & $ADB shell "rm -rf '$path'" 2>&1 | Out-Null
+        $output = & $ADB push "$LocalDir" "$path" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "ADB push failed: $output"
+            return $false
+        }
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -911,9 +927,15 @@ function Invoke-Deploy {
     }
 
     Write-Host "Pushing AndroidConsolizer.dll..."
-    Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_DLL | Out-Null
+    if (-not (Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_DLL)) {
+        Write-Err "Failed to push DLL — aborting deploy"
+        return
+    }
     Write-Host "Pushing manifest.json..."
-    Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_MANIFEST | Out-Null
+    if (-not (Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_MANIFEST)) {
+        Write-Err "Failed to push manifest — aborting deploy"
+        return
+    }
 
     # Restart game
     Write-Host ""
@@ -1908,7 +1930,8 @@ function Invoke-SmapiInstall {
 
     if (-not $script:DryRun) {
         if ($Transport.CanAdbShell) {
-            try { & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null } catch { }
+            $output = & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1
+            if ($LASTEXITCODE -ne 0) { Write-Err "ADB push failed: $output" }
         }
         elseif ($Transport.MtpDevice) {
             $dlFolder = Navigate-MtpPath -StartFolder $Transport.MtpStorage.GetFolder -Segments @("Download")
@@ -2043,7 +2066,8 @@ function Invoke-Bootstrap {
     # 3. Push SMAPI installer zip to Download
     $zip = Get-ChildItem $smapiInstallDir -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     Write-Host "Pushing $($zip.Name) to /storage/emulated/0/Download/..."
-    try { & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null } catch { }
+    $output = & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Err "ADB push failed: $output" }
 
     # 4. Launch SMAPI Launcher for user to tap Install
     Write-Host "Launching SMAPI Launcher..."
