@@ -497,8 +497,10 @@ function Device-PullFile {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
         $output = & $ADB pull "$path/$Name" "$LocalDest" 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = $LASTEXITCODE; $ErrorActionPreference = $prevEAP
+        if ($exitCode -ne 0) {
             Write-Err "ADB pull failed: $output"
             return $false
         }
@@ -531,8 +533,10 @@ function Device-PushFile {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
         $output = & $ADB push "$LocalPath" "$path/$name" 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = $LASTEXITCODE; $ErrorActionPreference = $prevEAP
+        if ($exitCode -ne 0) {
             Write-Err "ADB push failed: $output"
             return $false
         }
@@ -563,8 +567,10 @@ function Device-PullFolder {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
         $output = & $ADB pull "$path/" "$LocalDest/" 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = $LASTEXITCODE; $ErrorActionPreference = $prevEAP
+        if ($exitCode -ne 0) {
             Write-Err "ADB pull failed: $output"
             return $false
         }
@@ -592,9 +598,11 @@ function Device-PushFolder {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
         # Clear target first — adb push nests dir inside existing dir, causing double-nesting
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
         & $ADB shell "rm -rf '$path'" 2>&1 | Out-Null
         $output = & $ADB push "$LocalDir" "$path" 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $exitCode = $LASTEXITCODE; $ErrorActionPreference = $prevEAP
+        if ($exitCode -ne 0) {
             Write-Err "ADB push failed: $output"
             return $false
         }
@@ -620,7 +628,9 @@ function Device-DeleteItem {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
         & $ADB shell "rm -rf '$path/$Name'" 2>&1 | Out-Null
+        $ErrorActionPreference = $prevEAP
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
