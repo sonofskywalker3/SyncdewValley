@@ -579,7 +579,9 @@ function Device-PushFolder {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        try { & $ADB push "$LocalDir/" "$path/" 2>&1 | Out-Null } catch { }
+        # Clear target first — adb push nests dir inside existing dir, causing double-nesting
+        try { & $ADB shell "rm -rf '$path'" 2>&1 | Out-Null } catch { }
+        try { & $ADB push "$LocalDir" "$path" 2>&1 | Out-Null } catch { }
         return $true
     }
     elseif ($Transport.Type -eq "MTP") {
@@ -1001,19 +1003,14 @@ function Invoke-PushSaves {
     foreach ($localSave in Get-ChildItem $SAVES_DIR -Directory) {
         Write-Host "  Pushing: $($localSave.Name)/"
 
-        # Check if save exists on device; create folder if missing
-        $deviceSaves = Device-ListDir -Transport $Transport -Segments $SAVES_SEGMENTS
-        $exists = $false
-        foreach ($ds in $deviceSaves) {
-            if ($ds.Name -eq $localSave.Name -and $ds.IsFolder) { $exists = $true; break }
-        }
-
-        if (-not $exists) {
-            if ($Transport.CanAdbFiles) {
-                $savePath = "$ADB_GAME_ROOT/Saves/$($localSave.Name)"
-                try { & $ADB shell "mkdir -p '$savePath'" 2>&1 | Out-Null } catch { }
-                Write-Dim "    Created save folder on device"
-            } else {
+        # For MTP, target folder must already exist (can't create via MTP)
+        if (-not $Transport.CanAdbFiles) {
+            $deviceSaves = Device-ListDir -Transport $Transport -Segments $SAVES_SEGMENTS
+            $exists = $false
+            foreach ($ds in $deviceSaves) {
+                if ($ds.Name -eq $localSave.Name -and $ds.IsFolder) { $exists = $true; break }
+            }
+            if (-not $exists) {
                 Write-Warn "    Save '$($localSave.Name)' doesn't exist on device, skipping"
                 continue
             }
@@ -1241,10 +1238,6 @@ function Invoke-SaveSync {
                 if ($choice -ne "y") { continue }
             } else {
                 Write-Host "    -> Pushing (only local, creating on device)"
-            }
-            if ($Transport.CanAdbFiles) {
-                $savePath = "$ADB_GAME_ROOT/Saves/$name"
-                try { & $ADB shell "mkdir -p '$savePath'" 2>&1 | Out-Null } catch { }
             }
             Device-PushFolder -Transport $Transport -Segments ($SAVES_SEGMENTS + @($name)) -LocalDir $localDir | Out-Null
             $synced++
