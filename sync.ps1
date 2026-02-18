@@ -1926,6 +1926,158 @@ function Invoke-SmapiInstall {
     Write-Success "SMAPI install complete."
 }
 
+# --- Bootstrap ---
+
+function Invoke-Bootstrap {
+    param($Transport)
+
+    # Bootstrap only needed when we have ADB shell but no file access
+    if (-not $Transport.CanAdbShell) { return $false }
+    if ($Transport.CanAdbFiles) { return $false }
+    # MTP transport with file access means game root exists
+    if ($Transport.MtpDevice -and $Transport.MtpStorage) { return $false }
+
+    Write-Header "Bootstrap SMAPI"
+
+    # Check what's installed on device
+    $packages = & $ADB shell pm list packages 2>&1 | Out-String
+    $hasSdv = $packages -match [regex]::Escape($SDV_PACKAGE)
+    $hasSmapi = $packages -match [regex]::Escape($PACKAGE)
+
+    if ($hasSmapi) {
+        # SMAPI installed but data dir doesn't exist -- launch game to create it
+        Write-Host "SMAPI is installed but game data directory not found."
+        Write-Host "Launching game to initialize data directory..."
+
+        if ($script:DryRun) {
+            Write-Dim "[DryRun] Would launch game and wait for data directory creation."
+            return $false
+        }
+
+        Start-Game -Transport $Transport
+
+        $timeout = 60
+        $elapsed = 0
+        Write-Host "Waiting up to ${timeout}s for data directory..."
+        while ($elapsed -lt $timeout) {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            try {
+                $lsResult = & $ADB shell "ls $ADB_GAME_ROOT/ 2>/dev/null" 2>&1
+                $lsStr = ($lsResult | Out-String).Trim()
+                if ($lsStr -and $lsStr -notmatch "Permission denied|No such file") {
+                    Write-Success "Data directory created after ${elapsed}s."
+                    Stop-Game -Transport $Transport
+                    return $true
+                }
+            } catch { }
+            Write-Host "  ... ${elapsed}s"
+        }
+
+        Write-Err "Timed out waiting for data directory."
+        Stop-Game -Transport $Transport
+        return $false
+    }
+
+    # SMAPI not installed -- check cached APKs
+    $sdvDir = Join-Path $APKS_DIR "stardew-valley"
+    $smapiLauncherDir = Join-Path $APKS_DIR "smapi-launcher"
+    $smapiInstallDir = Join-Path $APKS_DIR "smapi-install"
+
+    $missing = @()
+    if (-not $hasSdv) {
+        if (-not (Test-Path $sdvDir) -or (Get-ChildItem $sdvDir -Filter "*.apk" -ErrorAction SilentlyContinue).Count -eq 0) {
+            $missing += "Stardew Valley APK(s) in: $sdvDir"
+        }
+    }
+    if (-not (Test-Path $smapiLauncherDir) -or (Get-ChildItem $smapiLauncherDir -Filter "*.apk" -ErrorAction SilentlyContinue).Count -eq 0) {
+        $missing += "SMAPI Launcher APK in: $smapiLauncherDir"
+    }
+    if (-not (Test-Path $smapiInstallDir) -or (Get-ChildItem $smapiInstallDir -Filter "*.zip" -ErrorAction SilentlyContinue).Count -eq 0) {
+        $missing += "SMAPI installer zip in: $smapiInstallDir"
+    }
+
+    if ($missing.Count -gt 0) {
+        Write-Err "Cannot bootstrap -- missing required files:"
+        foreach ($m in $missing) {
+            Write-Host "  - $m"
+        }
+        Write-Host ""
+        Write-Host "Pull these from an existing device with 'apk-pull', or download manually."
+        return $false
+    }
+
+    # All files present -- confirm with user
+    if (-not $script:ForceMode) {
+        Write-Warn "SMAPI is not installed on this device."
+        $choice = Read-Host "Bootstrap full SMAPI installation now? [Y/n]"
+        if ($choice -eq "n") { return $false }
+    }
+
+    if ($script:DryRun) {
+        Write-Dim "[DryRun] Would install SDV + SMAPI Launcher, push SMAPI installer, and launch game."
+        return $false
+    }
+
+    # 1. Install SDV if needed
+    if (-not $hasSdv) {
+        $apks = Get-ChildItem $sdvDir -Filter "*.apk" | ForEach-Object { $_.FullName }
+        if ($apks.Count -gt 1) {
+            Write-Host "Installing Stardew Valley (split APK, $($apks.Count) parts)..."
+            & $ADB install-multiple @apks 2>&1
+        } elseif ($apks.Count -eq 1) {
+            Write-Host "Installing Stardew Valley..."
+            & $ADB install $apks[0] 2>&1
+        }
+    } else {
+        Write-Dim "Stardew Valley already installed."
+    }
+
+    # 2. Install SMAPI Launcher
+    $apk = Get-ChildItem $smapiLauncherDir -Filter "*.apk" | Select-Object -First 1
+    Write-Host "Installing SMAPI Launcher..."
+    & $ADB install $apk.FullName 2>&1
+
+    # 3. Push SMAPI installer zip to Download
+    $zip = Get-ChildItem $smapiInstallDir -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    Write-Host "Pushing $($zip.Name) to /storage/emulated/0/Download/..."
+    & $ADB push $zip.FullName "/storage/emulated/0/Download/$($zip.Name)" 2>&1 | Out-Null
+
+    # 4. Launch SMAPI Launcher for user to tap Install
+    Write-Host "Launching SMAPI Launcher..."
+    & $ADB shell monkey -p $PACKAGE -c android.intent.category.LAUNCHER 1 2>&1 | Out-Null
+
+    Write-Host ""
+    Write-Warn "Tap 'Install' in the SMAPI Launcher to complete SMAPI installation."
+    Read-Host "Press Enter when done"
+
+    # 5. Launch game to create data directory
+    Write-Host "Launching game to initialize data directory..."
+    Start-Game -Transport $Transport
+
+    $timeout = 60
+    $elapsed = 0
+    Write-Host "Waiting up to ${timeout}s for data directory..."
+    while ($elapsed -lt $timeout) {
+        Start-Sleep -Seconds 3
+        $elapsed += 3
+        try {
+            $lsResult = & $ADB shell "ls $ADB_GAME_ROOT/ 2>/dev/null" 2>&1
+            $lsStr = ($lsResult | Out-String).Trim()
+            if ($lsStr -and $lsStr -notmatch "Permission denied|No such file") {
+                Write-Success "Data directory created after ${elapsed}s."
+                Stop-Game -Transport $Transport
+                return $true
+            }
+        } catch { }
+        Write-Host "  ... ${elapsed}s"
+    }
+
+    Write-Err "Timed out waiting for data directory."
+    Stop-Game -Transport $Transport
+    return $false
+}
+
 # --- Full Sync ---
 
 function Invoke-FullSync {
@@ -2040,6 +2192,18 @@ if ($transport) {
 
 # Ensure sync dirs exist
 Ensure-SyncDirs
+
+# Bootstrap SMAPI if needed (skip for commands that don't need file access)
+$bootstrapSkip = @("status", "apk-status", "apk-pull", "apk-install", "smapi-install", "help")
+if ($transport -and $transport.CanAdbShell -and $Command.ToLower() -notin $bootstrapSkip) {
+    $bootstrapped = Invoke-Bootstrap -Transport $transport
+    if ($bootstrapped) {
+        Write-Host ""
+        Write-Dim "Re-detecting transport after bootstrap..."
+        $transport = Detect-Transport
+        Update-DeviceProfile -Transport $transport
+    }
+}
 
 # Route command
 switch ($Command.ToLower()) {
