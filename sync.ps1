@@ -20,7 +20,7 @@
 #   .\sync.ps1 configs           Sync configs
 #   .\sync.ps1 pull-configs      Pull configs from device
 #   .\sync.ps1 push-configs      Push configs to device
-#   .\sync.ps1 deploy            Deploy AndroidConsolizer DLL + manifest
+#   .\sync.ps1 deploy            Deploy AndroidConsolizer + GMCM fork DLLs + manifests
 #   .\sync.ps1 logs              Pull SMAPI-latest.txt
 #   .\sync.ps1 launch            Force-stop + relaunch game
 #   .\sync.ps1 apk-status        Check if SDV + SMAPI are installed
@@ -68,6 +68,12 @@ $SOURCE_DLL = Join-Path $BUILD_DIR "AndroidConsolizer.dll"
 $SOURCE_MANIFEST = Join-Path $PROJECT_ROOT "AndroidConsolizer\manifest.json"
 $LOG_DEST = Join-Path $BUILD_DIR "SMAPI-latest.txt"
 
+# GMCM Android fork — separate project, deployed alongside AC
+$GMCM_PROJECT_ROOT = Join-Path (Split-Path $PROJECT_ROOT -Parent) "GMCM-Android"
+$GMCM_BUILD_DIR = Join-Path $GMCM_PROJECT_ROOT "bin\Release"
+$GMCM_SOURCE_DLL = Join-Path $GMCM_BUILD_DIR "GenericModConfigMenu.dll"
+$GMCM_SOURCE_MANIFEST = Join-Path $GMCM_PROJECT_ROOT "manifest.json"
+
 # Sync directories (inside SyncdewValley/)
 $SYNC_ROOT = Join-Path $SYNCDEW_ROOT "sync"
 $SAVES_DIR = Join-Path $SYNC_ROOT "saves"
@@ -84,6 +90,7 @@ $GAME_ROOT_SEGMENTS = @("Android", "data", "abc.smapi.gameloader", "files")
 $SAVES_SEGMENTS = $GAME_ROOT_SEGMENTS + @("Saves")
 $MODS_SEGMENTS = $GAME_ROOT_SEGMENTS + @("Mods")
 $MOD_SEGMENTS = $GAME_ROOT_SEGMENTS + @("Mods", "AndroidConsolizer")
+$GMCM_MOD_SEGMENTS = $GAME_ROOT_SEGMENTS + @("Mods", "GenericModConfigMenu")
 $LOG_SEGMENTS = $GAME_ROOT_SEGMENTS + @("ErrorLogs")
 $SMAPI_SEGMENTS = $GAME_ROOT_SEGMENTS + @("Stardew Assemblies", "smapi-internal")
 
@@ -915,7 +922,7 @@ function Invoke-Status {
 function Invoke-Deploy {
     param($Transport)
 
-    Write-Header "Deploy AndroidConsolizer"
+    Write-Header "Deploy AndroidConsolizer + GMCM Fork"
 
     if (-not (Test-Path $SOURCE_DLL)) {
         Write-Err "DLL not found: $SOURCE_DLL"
@@ -974,6 +981,41 @@ function Invoke-Deploy {
         Copy-Item $SOURCE_DLL (Join-Path $syncModDir "AndroidConsolizer.dll") -Force
         Copy-Item $SOURCE_MANIFEST (Join-Path $syncModDir "manifest.json") -Force
         Write-Dim "  Updated sync/mods/AndroidConsolizer/ to v$version"
+    }
+
+    # Deploy GMCM Android fork alongside AC (if built)
+    if (Test-Path $GMCM_SOURCE_DLL) {
+        $gmcmManifestJson = Get-Content $GMCM_SOURCE_MANIFEST -Raw | ConvertFrom-Json
+        $gmcmVersion = $gmcmManifestJson.Version
+        $gmcmDllSize = (Get-Item $GMCM_SOURCE_DLL).Length
+        Write-Host ""
+        Write-Host "GMCM fork: v$gmcmVersion ($gmcmDllSize bytes)"
+
+        Write-Host "Pushing GenericModConfigMenu.dll..."
+        try {
+            $gmcmResult = Device-PushFile -Transport $Transport -Segments $GMCM_MOD_SEGMENTS -LocalPath $GMCM_SOURCE_DLL
+            if (-not $gmcmResult) { throw "Device-PushFile returned false" }
+        } catch {
+            Write-Err "Failed to push GMCM DLL: $_"
+        }
+
+        Write-Host "Pushing GMCM manifest.json..."
+        try {
+            $gmcmManifestResult = Device-PushFile -Transport $Transport -Segments $GMCM_MOD_SEGMENTS -LocalPath $GMCM_SOURCE_MANIFEST
+            if (-not $gmcmManifestResult) { throw "Device-PushFile returned false" }
+        } catch {
+            Write-Err "Failed to push GMCM manifest: $_"
+        }
+
+        # Update sync directory
+        $syncGmcmDir = Join-Path $MODS_DIR "GenericModConfigMenu"
+        if (Test-Path $syncGmcmDir) {
+            Copy-Item $GMCM_SOURCE_DLL (Join-Path $syncGmcmDir "GenericModConfigMenu.dll") -Force
+            Copy-Item $GMCM_SOURCE_MANIFEST (Join-Path $syncGmcmDir "manifest.json") -Force
+            Write-Dim "  Updated sync/mods/GenericModConfigMenu/ to v$gmcmVersion"
+        }
+    } else {
+        Write-Dim "  GMCM fork not built — skipping (build at $GMCM_PROJECT_ROOT)"
     }
 
     # Restart game
@@ -2208,7 +2250,7 @@ function Show-Help {
     Write-Host "  configs         Sync configs (newer wins)"
     Write-Host "  pull-configs    Pull all configs from device"
     Write-Host "  push-configs    Push all configs to device"
-    Write-Host "  deploy          Deploy AndroidConsolizer DLL + manifest, launch game"
+    Write-Host "  deploy          Deploy AndroidConsolizer + GMCM fork, launch game"
     Write-Host "  logs            Pull SMAPI-latest.txt to build output"
     Write-Host "  launch          Force-stop + relaunch game"
     Write-Host "  apk-status      Check SDV + SMAPI installed on device"
