@@ -927,8 +927,11 @@ function Invoke-Deploy {
         return
     }
 
+    # Read version from manifest
+    $manifestJson = Get-Content $SOURCE_MANIFEST -Raw | ConvertFrom-Json
+    $version = $manifestJson.Version
     $dllSize = (Get-Item $SOURCE_DLL).Length
-    Write-Host "DLL: $dllSize bytes"
+    Write-Host "Version: $version ($dllSize bytes)"
 
     if ($script:DryRun) {
         Write-DryRun "Would push AndroidConsolizer.dll + manifest.json to device"
@@ -936,15 +939,41 @@ function Invoke-Deploy {
         return
     }
 
+    # Push each file with try/catch — global $ErrorActionPreference=Stop kills
+    # execution on any MTP COM error, so we must guard each push individually
+    $pushOk = $true
+
     Write-Host "Pushing AndroidConsolizer.dll..."
-    if (-not (Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_DLL)) {
-        Write-Err "Failed to push DLL — aborting deploy"
+    try {
+        $dllResult = Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_DLL
+        if (-not $dllResult) { throw "Device-PushFile returned false" }
+    } catch {
+        Write-Err "Failed to push DLL: $_"
+        $pushOk = $false
+    }
+
+    if ($pushOk) {
+        Write-Host "Pushing manifest.json..."
+        try {
+            $manifestResult = Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_MANIFEST
+            if (-not $manifestResult) { throw "Device-PushFile returned false" }
+        } catch {
+            Write-Err "Failed to push manifest: $_"
+            $pushOk = $false
+        }
+    }
+
+    if (-not $pushOk) {
+        Write-Err "Deploy failed - aborting"
         return
     }
-    Write-Host "Pushing manifest.json..."
-    if (-not (Device-PushFile -Transport $Transport -Segments $MOD_SEGMENTS -LocalPath $SOURCE_MANIFEST)) {
-        Write-Err "Failed to push manifest — aborting deploy"
-        return
+
+    # Keep sync directory in sync so push-mods won't overwrite with stale copies
+    $syncModDir = Join-Path $MODS_DIR "AndroidConsolizer"
+    if (Test-Path $syncModDir) {
+        Copy-Item $SOURCE_DLL (Join-Path $syncModDir "AndroidConsolizer.dll") -Force
+        Copy-Item $SOURCE_MANIFEST (Join-Path $syncModDir "manifest.json") -Force
+        Write-Dim "  Updated sync/mods/AndroidConsolizer/ to v$version"
     }
 
     # Restart game
@@ -952,7 +981,7 @@ function Invoke-Deploy {
     Stop-Game -Transport $Transport
     Start-Game -Transport $Transport
 
-    Write-Success "Deploy complete!"
+    Write-Success "Deploy v$version complete!"
 }
 
 # --- Logs ---
