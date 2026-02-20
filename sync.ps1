@@ -67,6 +67,7 @@ $BUILD_DIR = Join-Path $PROJECT_ROOT "AndroidConsolizer\bin\Release\net6.0"
 $SOURCE_DLL = Join-Path $BUILD_DIR "AndroidConsolizer.dll"
 $SOURCE_MANIFEST = Join-Path $PROJECT_ROOT "AndroidConsolizer\manifest.json"
 $LOG_DEST = Join-Path $BUILD_DIR "SMAPI-latest.txt"
+$LOG_ARCHIVE_DIR = Join-Path $BUILD_DIR "log-archive"
 
 # GMCM Android fork — separate project, deployed alongside AC
 $GMCM_PROJECT_ROOT = Join-Path (Split-Path $PROJECT_ROOT -Parent) "GMCM-Android"
@@ -1035,7 +1036,31 @@ function Invoke-Logs {
 
     Stop-Game -Transport $Transport
 
+    # Archive existing log before overwriting
     if (Test-Path $LOG_DEST) {
+        if (-not (Test-Path $LOG_ARCHIVE_DIR)) {
+            New-Item -ItemType Directory -Path $LOG_ARCHIVE_DIR -Force | Out-Null
+        }
+        # Get mod version from manifest for the archive filename
+        $manifestPath = Join-Path $PROJECT_ROOT "AndroidConsolizer\manifest.json"
+        $version = "unknown"
+        if (Test-Path $manifestPath) {
+            $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+            $version = $manifest.Version
+        }
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $archiveName = "SMAPI-v${version}-${timestamp}.txt"
+        $archivePath = Join-Path $LOG_ARCHIVE_DIR $archiveName
+        Copy-Item $LOG_DEST $archivePath -Force
+        Write-Dim "Archived previous log: log-archive/$archiveName"
+
+        # Prune old archives (keep 30 most recent)
+        $allArchives = Get-ChildItem $LOG_ARCHIVE_DIR -Filter "SMAPI-*.txt" -ErrorAction SilentlyContinue | Sort-Object Name -Descending
+        if ($allArchives.Count -gt 30) {
+            $allArchives | Select-Object -Skip 30 | ForEach-Object { Remove-Item $_.FullName -Force }
+            Write-Dim "Pruned old log archives (kept 30)"
+        }
+
         Remove-Item $LOG_DEST -Force
     }
 
