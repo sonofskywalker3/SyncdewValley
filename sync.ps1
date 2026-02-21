@@ -733,6 +733,7 @@ function Update-DeviceProfile {
     $tapCoords = $null
     if ($Transport.Model -like "*Odin*") { $tapCoords = "540 1436" }
     elseif ($Transport.Model -like "*G_Cloud*") { $tapCoords = "540 1398" }
+    elseif ($Transport.Model -like "*9469*") { $tapCoords = "720 1540" }  # TCL NXTPaper 11 Plus (1440x2200)
 
     $script:DeviceProfiles[$key] = @{
         Name        = $Transport.DeviceName
