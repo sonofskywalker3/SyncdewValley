@@ -791,22 +791,14 @@ function Find-StartGameButton {
     param($Transport)
     if (-not $Transport.CanAdbShell) { return $null }
 
-    # Try dumping UI hierarchy directly to stdout
+    # Dump UI hierarchy to temp file on device, cat it back, delete
+    # Uses /data/local/tmp/ to avoid Git Bash path translation issues
     $xml = $null
     try {
-        $xml = & $ADB shell uiautomator dump /dev/tty 2>&1 | Out-String
+        $xml = & $ADB shell "uiautomator dump /data/local/tmp/ui.xml && cat /data/local/tmp/ui.xml && rm /data/local/tmp/ui.xml" 2>&1 | Out-String
     } catch { }
 
-    # Fallback: dump to temp file, cat it back, delete
-    if (-not $xml -or $xml -notmatch 'hierarchy') {
-        try {
-            & $ADB shell uiautomator dump /storage/emulated/0/window_dump.xml 2>&1 | Out-Null
-            $xml = & $ADB shell cat /storage/emulated/0/window_dump.xml 2>&1 | Out-String
-            & $ADB shell rm /storage/emulated/0/window_dump.xml 2>&1 | Out-Null
-        } catch { }
-    }
-
-    if (-not $xml) { return $null }
+    if (-not $xml -or $xml -notmatch 'hierarchy') { return $null }
 
     # Match node with text="Start Game" (case-insensitive) and extract bounds
     if ($xml -match '(?i)text="Start Game"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"') {
@@ -2306,6 +2298,37 @@ function Invoke-Bootstrap {
     $packages = & $ADB shell pm list packages 2>&1 | Out-String
     $hasSdv = $packages -match [regex]::Escape($SDV_PACKAGE)
     $hasSmapi = $packages -match [regex]::Escape($PACKAGE)
+
+    # Update SDV if installed but cached APKs are newer
+    $sdvDir = Join-Path $APKS_DIR "stardew-valley"
+    if ($hasSdv -and (Test-Path $sdvDir) -and (Get-ChildItem $sdvDir -Filter "*.apk" -ErrorAction SilentlyContinue).Count -gt 0) {
+        $verInfo = & $ADB shell dumpsys package $SDV_PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+        $installedVer = if ($verInfo -match 'versionName=(\S+)') { $Matches[1] } else { "unknown" }
+        Write-Host "Stardew Valley installed: v$installedVer — checking for update..."
+
+        $apks = Get-ChildItem $sdvDir -Filter "*.apk" | ForEach-Object { $_.FullName }
+        if ($apks.Count -gt 1) {
+            $output = & $ADB install-multiple -r @apks 2>&1
+        } else {
+            $output = & $ADB install -r $apks[0] 2>&1
+        }
+        $outStr = ($output | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            if ($outStr -match "INSTALL_FAILED_VERSION_DOWNGRADE") {
+                Write-Dim "SDV is up to date."
+            } else {
+                Write-Err "SDV update failed: $outStr"
+            }
+        } else {
+            $verInfo = & $ADB shell dumpsys package $SDV_PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+            $newVer = if ($verInfo -match 'versionName=(\S+)') { $Matches[1] } else { "unknown" }
+            if ($newVer -ne $installedVer) {
+                Write-Success "Stardew Valley updated: v$installedVer -> v$newVer"
+            } else {
+                Write-Dim "SDV is up to date (v$newVer)."
+            }
+        }
+    }
 
     if ($hasSmapi) {
         # SMAPI installed but data dir doesn't exist -- launch game to create it
