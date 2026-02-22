@@ -2166,45 +2166,80 @@ function Invoke-ApkInstall {
 
     $packages = & $ADB shell pm list packages 2>&1 | Out-String
 
-    # Install SDV if missing
+    # Install or update SDV
     $sdvDir = Join-Path $APKS_DIR "stardew-valley"
-    if ($packages -notmatch $SDV_PACKAGE) {
-        if (-not (Test-Path $sdvDir)) {
+    if (-not (Test-Path $sdvDir) -or (Get-ChildItem $sdvDir -Filter "*.apk" -ErrorAction SilentlyContinue).Count -eq 0) {
+        if ($packages -notmatch $SDV_PACKAGE) {
             Write-Err "SDV not installed and no cached APKs. Run 'apk-pull' from a device that has it."
             return
         }
+        Write-Dim "Stardew Valley installed, no cached APKs to compare."
+    } else {
         $apks = Get-ChildItem $sdvDir -Filter "*.apk" | ForEach-Object { $_.FullName }
-        if ($apks.Count -gt 1) {
-            Write-Host "Installing Stardew Valley (split APK, $($apks.Count) parts)..."
-            if (-not $script:DryRun) {
-                & $ADB install-multiple @apks 2>&1
-            }
-        } elseif ($apks.Count -eq 1) {
+        $hasSdv = $packages -match [regex]::Escape($SDV_PACKAGE)
+        if ($hasSdv) {
+            $verInfo = & $ADB shell dumpsys package $SDV_PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+            $installedVer = if ($verInfo -match 'versionName=(\S+)') { $Matches[1] } else { "unknown" }
+            Write-Host "Stardew Valley installed: v$installedVer — installing cached APKs..."
+        } else {
             Write-Host "Installing Stardew Valley..."
-            if (-not $script:DryRun) {
-                & $ADB install $apks[0] 2>&1
+        }
+        if (-not $script:DryRun) {
+            if ($apks.Count -gt 1) {
+                $output = & $ADB install-multiple -r @apks 2>&1
+            } else {
+                $output = & $ADB install -r $apks[0] 2>&1
+            }
+            $outStr = ($output | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+                if ($outStr -match "INSTALL_FAILED_VERSION_DOWNGRADE") {
+                    Write-Dim "Installed SDV is same version or newer. Skipping."
+                } else {
+                    Write-Err "SDV install failed: $outStr"
+                    return
+                }
+            } else {
+                $verInfo = & $ADB shell dumpsys package $SDV_PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+                $newVer = if ($verInfo -match 'versionName=(\S+)') { $Matches[1] } else { "unknown" }
+                Write-Success "Stardew Valley v$newVer installed."
             }
         }
-    } else {
-        Write-Dim "Stardew Valley already installed."
     }
 
-    # Install SMAPI Launcher if missing
+    # Install or update SMAPI Launcher
     $smapiDir = Join-Path $APKS_DIR "smapi-launcher"
-    if ($packages -notmatch [regex]::Escape($PACKAGE)) {
-        if (-not (Test-Path $smapiDir)) {
+    if (-not (Test-Path $smapiDir) -or (Get-ChildItem $smapiDir -Filter "*.apk" -ErrorAction SilentlyContinue).Count -eq 0) {
+        if ($packages -notmatch [regex]::Escape($PACKAGE)) {
             Write-Err "SMAPI Launcher not installed and no cached APKs. Run 'apk-pull' from a device that has it."
             return
         }
+        Write-Dim "SMAPI Launcher installed, no cached APKs to compare."
+    } else {
         $apk = Get-ChildItem $smapiDir -Filter "*.apk" | Select-Object -First 1
-        if ($apk) {
+        $hasSmapi = $packages -match [regex]::Escape($PACKAGE)
+        if ($hasSmapi) {
+            $verInfo = & $ADB shell dumpsys package $PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+            $installedVer = if ($verInfo -match 'versionName=(\S+)') { $Matches[1] } else { "unknown" }
+            Write-Host "SMAPI Launcher installed: v$installedVer — installing cached APK..."
+        } else {
             Write-Host "Installing SMAPI Launcher..."
-            if (-not $script:DryRun) {
-                & $ADB install $apk.FullName 2>&1
+        }
+        if (-not $script:DryRun -and $apk) {
+            $output = & $ADB install -r $apk.FullName 2>&1
+            $outStr = ($output | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+                if ($outStr -match "INSTALL_FAILED_VERSION_DOWNGRADE") {
+                    Write-Dim "Installed SMAPI Launcher is same version or newer. Skipping."
+                } else {
+                    Write-Err "SMAPI Launcher install failed: $outStr"
+                    return
+                }
+            } else {
+                $verInfo = & $ADB shell dumpsys package $PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+                $newVer = if ($verInfo -match 'versionName=(\S+)') { $Matches[1] } else { "unknown" }
+                Write-Success "SMAPI Launcher v$newVer installed."
             }
         }
-    } else {
-        Write-Dim "SMAPI Launcher already installed."
     }
 
     Write-Success "APK installation complete."
@@ -2347,50 +2382,69 @@ function Invoke-Bootstrap {
         return $false
     }
 
-    # 1. Install SDV if needed
+    # 1. Install or update SDV
+    $apks = Get-ChildItem $sdvDir -Filter "*.apk" | ForEach-Object { $_.FullName }
     if (-not $hasSdv) {
-        $apks = Get-ChildItem $sdvDir -Filter "*.apk" | ForEach-Object { $_.FullName }
-        if ($apks.Count -gt 1) {
-            Write-Host "Installing Stardew Valley (split APK, $($apks.Count) parts)..."
-            $output = & $ADB install-multiple @apks 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Err "SDV install failed: $output"
-                return $false
-            }
-        } elseif ($apks.Count -eq 1) {
-            Write-Host "Installing Stardew Valley..."
-            $output = & $ADB install $apks[0] 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Err "SDV install failed: $output"
-                return $false
-            }
+        $action = "Installing"
+    } else {
+        # Check if cached APKs are newer than installed version
+        $installedVer = $null
+        $verInfo = & $ADB shell dumpsys package $SDV_PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+        if ($verInfo -match 'versionName=(\S+)') { $installedVer = $Matches[1] }
+        $action = "Updating"
+        Write-Host "Stardew Valley installed: v$installedVer — checking for update..."
+    }
+    if ($apks.Count -gt 1) {
+        Write-Host "$action Stardew Valley (split APK, $($apks.Count) parts)..."
+        $output = & $ADB install-multiple -r @apks 2>&1
+        $exitCode = $LASTEXITCODE
+    } elseif ($apks.Count -eq 1) {
+        Write-Host "$action Stardew Valley..."
+        $output = & $ADB install -r $apks[0] 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    $outStr = ($output | Out-String).Trim()
+    if ($exitCode -ne 0) {
+        if ($outStr -match "INSTALL_FAILED_VERSION_DOWNGRADE") {
+            Write-Dim "Installed SDV is same version or newer than cached APKs. Skipping."
+        } else {
+            Write-Err "SDV install failed: $outStr"
+            return $false
         }
+    } else {
         # Verify SDV actually registered
         $verifyPkgs = & $ADB shell pm list packages 2>&1 | Out-String
         if ($verifyPkgs -notmatch [regex]::Escape($SDV_PACKAGE)) {
             Write-Err "SDV install appeared to succeed but package not found. Aborting."
             return $false
         }
-        Write-Success "Stardew Valley installed."
-    } else {
-        Write-Dim "Stardew Valley already installed."
+        $newVer = $null
+        $verInfo = & $ADB shell dumpsys package $SDV_PACKAGE 2>&1 | Select-String "versionName" | Select-Object -First 1
+        if ($verInfo -match 'versionName=(\S+)') { $newVer = $Matches[1] }
+        Write-Success "Stardew Valley v$newVer installed."
     }
 
     # 2. Install SMAPI Launcher
     $apk = Get-ChildItem $smapiLauncherDir -Filter "*.apk" | Select-Object -First 1
     Write-Host "Installing SMAPI Launcher..."
-    $output = & $ADB install $apk.FullName 2>&1
+    $output = & $ADB install -r $apk.FullName 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Err "SMAPI Launcher install failed: $output"
-        return $false
+        $outStr = ($output | Out-String).Trim()
+        if ($outStr -match "INSTALL_FAILED_VERSION_DOWNGRADE") {
+            Write-Dim "SMAPI Launcher already up to date."
+        } else {
+            Write-Err "SMAPI Launcher install failed: $outStr"
+            return $false
+        }
+    } else {
+        # Verify SMAPI Launcher actually registered
+        $verifyPkgs = & $ADB shell pm list packages 2>&1 | Out-String
+        if ($verifyPkgs -notmatch [regex]::Escape($PACKAGE)) {
+            Write-Err "SMAPI Launcher install appeared to succeed but package not found. Aborting."
+            return $false
+        }
+        Write-Success "SMAPI Launcher installed."
     }
-    # Verify SMAPI Launcher actually registered
-    $verifyPkgs = & $ADB shell pm list packages 2>&1 | Out-String
-    if ($verifyPkgs -notmatch [regex]::Escape($PACKAGE)) {
-        Write-Err "SMAPI Launcher install appeared to succeed but package not found. Aborting."
-        return $false
-    }
-    Write-Success "SMAPI Launcher installed."
 
     # 3. Push SMAPI installer zip to Download
     $zip = Get-ChildItem $smapiInstallDir -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
