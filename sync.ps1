@@ -791,25 +791,46 @@ function Find-StartGameButton {
     param($Transport)
     if (-not $Transport.CanAdbShell) { return $null }
 
-    # Dump UI hierarchy to temp file on device, cat it back, delete
-    # Uses /data/local/tmp/ to avoid Git Bash path translation issues
+    # Try UIAutomator first (works for native Android apps)
     $xml = $null
     try {
         $xml = & $ADB shell "uiautomator dump /data/local/tmp/ui.xml && cat /data/local/tmp/ui.xml && rm /data/local/tmp/ui.xml" 2>&1 | Out-String
     } catch { }
 
-    if (-not $xml -or $xml -notmatch 'hierarchy') { return $null }
-
-    # Match node with text="Start Game" (case-insensitive) and extract bounds
-    if ($xml -match '(?i)text="Start Game"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"') {
-        $left = [int]$Matches[1]
-        $top = [int]$Matches[2]
-        $right = [int]$Matches[3]
-        $bottom = [int]$Matches[4]
-        $cx = [math]::Floor(($left + $right) / 2)
-        $cy = [math]::Floor(($top + $bottom) / 2)
-        return "$cx $cy"
+    if ($xml -and $xml -match 'hierarchy') {
+        if ($xml -match '(?i)text="Start Game"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"') {
+            $left = [int]$Matches[1]
+            $top = [int]$Matches[2]
+            $right = [int]$Matches[3]
+            $bottom = [int]$Matches[4]
+            $cx = [math]::Floor(($left + $right) / 2)
+            $cy = [math]::Floor(($top + $bottom) / 2)
+            Write-Dim "  (detected via UIAutomator)"
+            return "$cx $cy"
+        }
     }
+
+    # Fallback: estimate from screen size
+    # UIAutomator returns null root for Xamarin apps (SMAPI Launcher)
+    # Button is always centered horizontally; Y position estimated from known devices:
+    #   1080x1920 -> Y ~1417 (73.8%)   (Odin, G Cloud average)
+    #   960x1280  -> Y ~1098 (85.8%)   (Ayaneo)
+    #   1440x2200 -> Y ~1540 (70.0%)   (TCL NXTPaper)
+    # Use 74% of height as reasonable default for most tablets/phones
+    try {
+        $wmSize = & $ADB shell wm size 2>&1 | Out-String
+        if ($wmSize -match 'Physical size:\s*(\d+)x(\d+)') {
+            $w = [int]$Matches[1]
+            $h = [int]$Matches[2]
+            # Ensure portrait orientation (W < H)
+            if ($w -gt $h) { $temp = $w; $w = $h; $h = $temp }
+            $cx = [math]::Floor($w / 2)
+            $cy = [math]::Floor($h * 0.74)
+            Write-Dim "  (estimated from screen size: ${w}x${h})"
+            return "$cx $cy"
+        }
+    } catch { }
+
     return $null
 }
 
