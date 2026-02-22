@@ -333,8 +333,21 @@ function Copy-LocalFolderToMtp {
             }
         }
         if (-not $subFolder) {
-            Write-Warn "    Folder $($dir.Name) doesn't exist on device, skipping"
-            continue
+            # Try to create the missing directory via MTP
+            try {
+                $MtpFolder.NewFolder($dir.Name)
+                Start-Sleep -Milliseconds 500
+                foreach ($item in $MtpFolder.Items()) {
+                    if ($item.Name -eq $dir.Name -and $item.IsFolder) {
+                        $subFolder = $item.GetFolder
+                        break
+                    }
+                }
+            } catch { }
+            if (-not $subFolder) {
+                Write-Warn "    Could not create folder '$($dir.Name)' on device, skipping"
+                continue
+            }
         }
         Copy-LocalFolderToMtp -MtpFolder $subFolder -LocalDir $dir.FullName -Prefix "$Prefix$($dir.Name)/"
     }
@@ -657,6 +670,65 @@ function Device-DeleteItem {
             }
         }
         return $false
+    }
+    return $false
+}
+
+function Device-EnsureDir {
+    <#
+    .SYNOPSIS
+    Ensure a directory exists on the device, creating it if needed.
+    For ADB: uses mkdir -p. For MTP: walks path and creates missing segments via NewFolder.
+    #>
+    param($Transport, [string[]]$Segments)
+
+    if ($script:DryRun) { return $true }
+
+    if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
+        $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
+        if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
+        $safePath = $path -replace "'", "'\''"
+        $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
+        & $ADB shell "mkdir -p '$safePath'" 2>&1 | Out-Null
+        $ErrorActionPreference = $prevEAP
+        return $true
+    }
+    elseif ($Transport.Type -eq "MTP") {
+        $current = $Transport.MtpStorage.GetFolder
+        foreach ($segment in $Segments) {
+            $found = $null
+            foreach ($item in $current.Items()) {
+                if ($item.Name -eq $segment) {
+                    $found = $item
+                    break
+                }
+            }
+            if ($found) {
+                $current = $found.GetFolder
+            } else {
+                try {
+                    $current.NewFolder($segment)
+                    Start-Sleep -Milliseconds 500
+                    # Re-enumerate to find the newly created folder
+                    $found = $null
+                    foreach ($item in $current.Items()) {
+                        if ($item.Name -eq $segment -and $item.IsFolder) {
+                            $found = $item
+                            break
+                        }
+                    }
+                    if (-not $found) {
+                        Write-Warn "  Could not create folder '$segment' on device via MTP"
+                        return $false
+                    }
+                    $current = $found.GetFolder
+                } catch {
+                    Write-Warn "  MTP folder creation failed for '$segment': $_"
+                    return $false
+                }
+            }
+        }
+        return $true
     }
     return $false
 }
@@ -1322,20 +1394,14 @@ function Invoke-PushSaves {
     foreach ($localSave in Get-ChildItem $SAVES_DIR -Directory) {
         Write-Host "  Pushing: $($localSave.Name)/"
 
-        # For MTP, target folder must already exist (can't create via MTP)
-        if (-not $Transport.CanAdbFiles) {
-            $deviceSaves = Device-ListDir -Transport $Transport -Segments $SAVES_SEGMENTS
-            $exists = $false
-            foreach ($ds in $deviceSaves) {
-                if ($ds.Name -eq $localSave.Name -and $ds.IsFolder) { $exists = $true; break }
-            }
-            if (-not $exists) {
-                Write-Warn "    Save '$($localSave.Name)' doesn't exist on device, skipping"
-                continue
-            }
+        # Ensure save directory exists on device (fresh device may not have Saves/)
+        $saveSegments = $SAVES_SEGMENTS + @($localSave.Name)
+        if (-not (Device-EnsureDir -Transport $Transport -Segments $saveSegments)) {
+            Write-Warn "    Could not create save directory on device, skipping"
+            continue
         }
 
-        Device-PushFolder -Transport $Transport -Segments ($SAVES_SEGMENTS + @($localSave.Name)) -LocalDir $localSave.FullName | Out-Null
+        Device-PushFolder -Transport $Transport -Segments $saveSegments -LocalDir $localSave.FullName | Out-Null
     }
 
     Write-Success "Saves pushed."
