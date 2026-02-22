@@ -23,6 +23,7 @@
 #   .\sync.ps1 deploy            Deploy AndroidConsolizer + GMCM fork DLLs + manifests
 #   .\sync.ps1 logs              Pull SMAPI-latest.txt
 #   .\sync.ps1 launch            Force-stop + relaunch game
+#   .\sync.ps1 map-button        Auto-detect 'Start Game' button position
 #   .\sync.ps1 apk-status        Check if SDV + SMAPI are installed
 #   .\sync.ps1 apk-pull          Pull APKs from device to cache
 #   .\sync.ps1 apk-install       Install cached APKs to device
@@ -462,7 +463,8 @@ function Device-ListDir {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
-        $output = & $ADB shell "ls -1 '$path' 2>/dev/null" 2>&1
+        $safePath = $path -replace "'", "'\''"
+        $output = & $ADB shell "ls -1 '$safePath' 2>/dev/null" 2>&1
         $results = @()
         foreach ($line in $output) {
             $name = ($line -replace "`r","").Trim()
@@ -470,7 +472,8 @@ function Device-ListDir {
                 # Check if it's a directory
                 $isDir = $false
                 try {
-                    $typeCheck = & $ADB shell "[ -d '$path/$name' ] && echo D || echo F" 2>&1
+                    $safeName = $name -replace "'", "'\''"
+                    $typeCheck = & $ADB shell "[ -d '$safePath/$safeName' ] && echo D || echo F" 2>&1
                     $isDir = ($typeCheck -replace "`r","").Trim() -eq "D"
                 } catch { }
                 $results += @{ Name = $name; IsFolder = $isDir }
@@ -606,8 +609,9 @@ function Device-PushFolder {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
         # Clear target first — adb push nests dir inside existing dir, causing double-nesting
+        $safePath = $path -replace "'", "'\''"
         $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-        & $ADB shell "rm -rf '$path'" 2>&1 | Out-Null
+        & $ADB shell "rm -rf '$safePath'" 2>&1 | Out-Null
         $output = & $ADB push "$LocalDir" "$path" 2>&1
         $exitCode = $LASTEXITCODE; $ErrorActionPreference = $prevEAP
         if ($exitCode -ne 0) {
@@ -636,8 +640,10 @@ function Device-DeleteItem {
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
+        $safePath = $path -replace "'", "'\''"
+        $safeName = $Name -replace "'", "'\''"
         $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-        & $ADB shell "rm -rf '$path/$Name'" 2>&1 | Out-Null
+        & $ADB shell "rm -rf '$safePath/$safeName'" 2>&1 | Out-Null
         $ErrorActionPreference = $prevEAP
         return $true
     }
@@ -666,7 +672,9 @@ function Device-GetFileDate {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
         try {
-            $epoch = & $ADB shell "stat -c '%Y' '$path/$Name' 2>/dev/null" 2>&1
+            $safePath = $path -replace "'", "'\''"
+            $safeName = $Name -replace "'", "'\''"
+            $epoch = & $ADB shell "stat -c '%Y' '$safePath/$safeName' 2>/dev/null" 2>&1
             $epoch = ($epoch -replace "`r","").Trim()
             if ($epoch -match '^\d+$') {
                 return ([DateTimeOffset]::FromUnixTimeSeconds([long]$epoch)).LocalDateTime
@@ -729,11 +737,25 @@ function Update-DeviceProfile {
     $key = $Transport.DeviceId
     $now = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-    # Known device tap coordinates
-    $tapCoords = $null
-    if ($Transport.Model -like "*Odin*") { $tapCoords = "540 1436" }
-    elseif ($Transport.Model -like "*G_Cloud*") { $tapCoords = "540 1398" }
-    elseif ($Transport.Model -like "*9469*") { $tapCoords = "720 1540" }  # TCL NXTPaper 11 Plus (1440x2200)
+    # Preserve existing TapCoords if already saved (e.g. from auto-map or manual)
+    $existingCoords = $null
+    if ($script:DeviceProfiles.ContainsKey($key)) {
+        $existing = $script:DeviceProfiles[$key]
+        if ($existing -is [PSCustomObject]) {
+            $existingCoords = $existing.TapCoords
+        } elseif ($existing -is [hashtable]) {
+            $existingCoords = $existing["TapCoords"]
+        }
+    }
+
+    # Only use hardcoded coords as initial default when no saved coords exist
+    $tapCoords = $existingCoords
+    if (-not $tapCoords) {
+        if ($Transport.Model -like "*Odin*") { $tapCoords = "540 1436" }
+        elseif ($Transport.Model -like "*G_Cloud*") { $tapCoords = "540 1398" }
+        elseif ($Transport.Model -like "*GT78*") { $tapCoords = "480 1098" }  # Ayaneo Pocket Air Mini (960x1280)
+        elseif ($Transport.Model -like "*9469*") { $tapCoords = "720 1540" }  # TCL NXTPaper 11 Plus (1440x2200)
+    }
 
     $script:DeviceProfiles[$key] = @{
         Name        = $Transport.DeviceName
@@ -760,7 +782,66 @@ function Get-TapCoords {
     # Fallback based on model name
     if ($Transport.Model -like "*Odin*") { return "540 1436" }
     if ($Transport.Model -like "*G_Cloud*") { return "540 1398" }
+    if ($Transport.Model -like "*GT78*") { return "480 1098" }
+    if ($Transport.Model -like "*9469*") { return "720 1540" }
     return $null
+}
+
+function Find-StartGameButton {
+    param($Transport)
+    if (-not $Transport.CanAdbShell) { return $null }
+
+    # Try dumping UI hierarchy directly to stdout
+    $xml = $null
+    try {
+        $xml = & $ADB shell uiautomator dump /dev/tty 2>&1 | Out-String
+    } catch { }
+
+    # Fallback: dump to temp file, cat it back, delete
+    if (-not $xml -or $xml -notmatch 'hierarchy') {
+        try {
+            & $ADB shell uiautomator dump /storage/emulated/0/window_dump.xml 2>&1 | Out-Null
+            $xml = & $ADB shell cat /storage/emulated/0/window_dump.xml 2>&1 | Out-String
+            & $ADB shell rm /storage/emulated/0/window_dump.xml 2>&1 | Out-Null
+        } catch { }
+    }
+
+    if (-not $xml) { return $null }
+
+    # Match node with text="Start Game" (case-insensitive) and extract bounds
+    if ($xml -match '(?i)text="Start Game"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"') {
+        $left = [int]$Matches[1]
+        $top = [int]$Matches[2]
+        $right = [int]$Matches[3]
+        $bottom = [int]$Matches[4]
+        $cx = [math]::Floor(($left + $right) / 2)
+        $cy = [math]::Floor(($top + $bottom) / 2)
+        return "$cx $cy"
+    }
+    return $null
+}
+
+function Update-TapCoords {
+    param($Transport, [string]$Coords)
+    $key = $Transport.DeviceId
+    if ($script:DeviceProfiles.ContainsKey($key)) {
+        $profile = $script:DeviceProfiles[$key]
+        if ($profile -is [PSCustomObject]) {
+            $profile | Add-Member -NotePropertyName TapCoords -NotePropertyValue $Coords -Force
+        } elseif ($profile -is [hashtable]) {
+            $profile["TapCoords"] = $Coords
+        }
+    } else {
+        # Create minimal profile entry
+        $script:DeviceProfiles[$key] = @{
+            Name      = $Transport.DeviceName
+            Model     = $Transport.Model
+            Transport = $Transport.Type
+            TapCoords = $Coords
+            LastSeen  = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+        }
+    }
+    Save-DeviceProfiles
 }
 
 # =============================================================================
@@ -799,6 +880,27 @@ function Start-Game {
         try {
             & $ADB shell input tap $tapCoords.Split(" ") 2>&1 | Out-Null
         } catch { }
+    } else {
+        # No saved or hardcoded coords — try auto-mapping via UIAutomator
+        Write-Warn "No 'Start Game' button coordinates for this device. Attempting auto-detect..."
+        $detected = $null
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "  Waiting for launcher UI (attempt $attempt/3)..."
+            Start-Sleep -Seconds 4
+            $detected = Find-StartGameButton -Transport $Transport
+            if ($detected) { break }
+        }
+        if ($detected) {
+            Write-Success "Auto-detected 'Start Game' at: $detected"
+            Update-TapCoords -Transport $Transport -Coords $detected
+            Write-Host "Tapping 'Start Game'..."
+            try {
+                & $ADB shell input tap $detected.Split(" ") 2>&1 | Out-Null
+            } catch { }
+        } else {
+            Write-Warn "Could not auto-detect 'Start Game' button."
+            Write-Host "  Tap it manually, then run '.\sync.ps1 map-button' to save coordinates for next time."
+        }
     }
 }
 
@@ -1090,6 +1192,44 @@ function Invoke-Launch {
     Write-Success "Game launched!"
 }
 
+function Invoke-MapButton {
+    param($Transport)
+    Write-Header "Map 'Start Game' Button"
+
+    if (-not $Transport.CanAdbShell) {
+        Write-Err "Cannot map button (no ADB shell access)"
+        return
+    }
+
+    # Launch app so the Start Game button is visible
+    Write-Host "Launching SMAPI Launcher..."
+    try {
+        & $ADB shell am force-stop $PACKAGE 2>&1 | Out-Null
+        & $ADB shell monkey -p $PACKAGE -c android.intent.category.LAUNCHER 1 2>&1 | Out-Null
+    } catch { }
+
+    $detected = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Write-Host "  Waiting for launcher UI (attempt $attempt/3)..."
+        Start-Sleep -Seconds 4
+        $detected = Find-StartGameButton -Transport $Transport
+        if ($detected) { break }
+    }
+
+    if ($detected) {
+        Update-TapCoords -Transport $Transport -Coords $detected
+        Write-Success "Saved 'Start Game' coordinates: $detected"
+        Write-Host "  These will be used automatically on future launches."
+    } else {
+        Write-Err "Could not find 'Start Game' button in UI hierarchy."
+        Write-Host "  Make sure the SMAPI Launcher is open and showing the 'Start Game' button."
+        Write-Host "  Then try again: .\sync.ps1 map-button"
+    }
+
+    # Stop the app since we were just mapping
+    try { & $ADB shell am force-stop $PACKAGE 2>&1 | Out-Null } catch { }
+}
+
 # --- Pull/Push Saves ---
 
 function Invoke-PullSaves {
@@ -1187,18 +1327,74 @@ function Invoke-PushMods {
         return
     }
 
+    # Auto-sync AC build output to sync/mods/ before pushing
+    $syncAcDir = Join-Path $MODS_DIR "AndroidConsolizer"
+    if ((Test-Path $SOURCE_DLL) -and (Test-Path $syncAcDir)) {
+        $buildDate = (Get-Item $SOURCE_DLL).LastWriteTime
+        $syncDll = Join-Path $syncAcDir "AndroidConsolizer.dll"
+        $syncDate = if (Test-Path $syncDll) { (Get-Item $syncDll).LastWriteTime } else { [datetime]::MinValue }
+        if ($buildDate -gt $syncDate) {
+            $manifest = Get-Content $SOURCE_MANIFEST -Raw | ConvertFrom-Json
+            Copy-Item $SOURCE_DLL $syncDll -Force
+            Copy-Item $SOURCE_MANIFEST (Join-Path $syncAcDir "manifest.json") -Force
+            Write-Dim "  Synced AC v$($manifest.Version) from build output"
+        }
+    }
+
+    # Auto-sync GMCM fork build output to sync/mods/ before pushing
+    $syncGmcmDir = Join-Path $MODS_DIR "GenericModConfigMenu"
+    if ((Test-Path $GMCM_SOURCE_DLL) -and (Test-Path $syncGmcmDir)) {
+        $buildDate = (Get-Item $GMCM_SOURCE_DLL).LastWriteTime
+        $syncDll = Join-Path $syncGmcmDir "GenericModConfigMenu.dll"
+        $syncDate = if (Test-Path $syncDll) { (Get-Item $syncDll).LastWriteTime } else { [datetime]::MinValue }
+        if ($buildDate -gt $syncDate) {
+            $manifest = Get-Content $GMCM_SOURCE_MANIFEST -Raw | ConvertFrom-Json
+            Copy-Item $GMCM_SOURCE_DLL $syncDll -Force
+            Copy-Item $GMCM_SOURCE_MANIFEST (Join-Path $syncGmcmDir "manifest.json") -Force
+            Write-Dim "  Synced GMCM fork v$($manifest.Version) from build output"
+        }
+    }
+
     $deviceMods = Device-ListDir -Transport $Transport -Segments $MODS_SEGMENTS
-    $deviceModNames = $deviceMods | Where-Object { $_.IsFolder } | ForEach-Object { $_.Name }
+    $deviceModNames = @($deviceMods | Where-Object { $_.IsFolder } | ForEach-Object { $_.Name })
+    $localMods = Get-ChildItem $MODS_DIR -Directory
+    $localModNames = @($localMods | ForEach-Object { $_.Name })
 
-    foreach ($localMod in Get-ChildItem $MODS_DIR -Directory) {
-        Write-Host "  Pushing: $($localMod.Name)/"
-
-        if ($localMod.Name -notin $deviceModNames) {
-            Write-Warn "    Mod folder doesn't exist on device, skipping"
-            continue
+    # Push all local mods to device (create new or update existing)
+    foreach ($localMod in $localMods) {
+        if ($localMod.Name -in $deviceModNames) {
+            Write-Host "  Updating: $($localMod.Name)/"
+        } else {
+            Write-Host "  Creating: $($localMod.Name)/ (new)"
         }
 
         Device-PushFolder -Transport $Transport -Segments ($MODS_SEGMENTS + @($localMod.Name)) -LocalDir $localMod.FullName | Out-Null
+    }
+
+    # Remove device-only mods not in local
+    $deviceOnly = @($deviceModNames | Where-Object { $_ -notin $localModNames })
+    if ($deviceOnly.Count -gt 0) {
+        Write-Host ""
+        Write-Warn "Device-only mods (not in local sync):"
+        foreach ($dm in $deviceOnly) {
+            Write-Warn "  $dm"
+        }
+
+        $doRemove = $script:ForceMode
+        if (-not $doRemove) {
+            $answer = Read-Host "  Remove these from device? (y/N)"
+            $doRemove = $answer -match '^[Yy]'
+        }
+
+        if ($doRemove) {
+            foreach ($dm in $deviceOnly) {
+                Write-Host "  Removing: $dm/"
+                Device-DeleteItem -Transport $Transport -Segments $MODS_SEGMENTS -Name $dm | Out-Null
+            }
+            Write-Success "Removed $($deviceOnly.Count) device-only mod(s)."
+        } else {
+            Write-Dim "  Kept device-only mods."
+        }
     }
 
     Write-Success "Mods pushed."
@@ -2156,11 +2352,26 @@ function Invoke-Bootstrap {
         $apks = Get-ChildItem $sdvDir -Filter "*.apk" | ForEach-Object { $_.FullName }
         if ($apks.Count -gt 1) {
             Write-Host "Installing Stardew Valley (split APK, $($apks.Count) parts)..."
-            try { & $ADB install-multiple @apks 2>&1 } catch { }
+            $output = & $ADB install-multiple @apks 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Err "SDV install failed: $output"
+                return $false
+            }
         } elseif ($apks.Count -eq 1) {
             Write-Host "Installing Stardew Valley..."
-            try { & $ADB install $apks[0] 2>&1 } catch { }
+            $output = & $ADB install $apks[0] 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Err "SDV install failed: $output"
+                return $false
+            }
         }
+        # Verify SDV actually registered
+        $verifyPkgs = & $ADB shell pm list packages 2>&1 | Out-String
+        if ($verifyPkgs -notmatch [regex]::Escape($SDV_PACKAGE)) {
+            Write-Err "SDV install appeared to succeed but package not found. Aborting."
+            return $false
+        }
+        Write-Success "Stardew Valley installed."
     } else {
         Write-Dim "Stardew Valley already installed."
     }
@@ -2168,7 +2379,18 @@ function Invoke-Bootstrap {
     # 2. Install SMAPI Launcher
     $apk = Get-ChildItem $smapiLauncherDir -Filter "*.apk" | Select-Object -First 1
     Write-Host "Installing SMAPI Launcher..."
-    try { & $ADB install $apk.FullName 2>&1 } catch { }
+    $output = & $ADB install $apk.FullName 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "SMAPI Launcher install failed: $output"
+        return $false
+    }
+    # Verify SMAPI Launcher actually registered
+    $verifyPkgs = & $ADB shell pm list packages 2>&1 | Out-String
+    if ($verifyPkgs -notmatch [regex]::Escape($PACKAGE)) {
+        Write-Err "SMAPI Launcher install appeared to succeed but package not found. Aborting."
+        return $false
+    }
+    Write-Success "SMAPI Launcher installed."
 
     # 3. Push SMAPI installer zip to Download
     $zip = Get-ChildItem $smapiInstallDir -Filter "*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -2279,6 +2501,7 @@ function Show-Help {
     Write-Host "  deploy          Deploy AndroidConsolizer + GMCM fork, launch game"
     Write-Host "  logs            Pull SMAPI-latest.txt to build output"
     Write-Host "  launch          Force-stop + relaunch game"
+    Write-Host "  map-button      Auto-detect 'Start Game' button position"
     Write-Host "  apk-status      Check SDV + SMAPI installed on device"
     Write-Host "  apk-pull        Pull APKs from device to local cache"
     Write-Host "  apk-install     Install cached APKs to device"
@@ -2327,7 +2550,7 @@ if ($transport) {
 Ensure-SyncDirs
 
 # Bootstrap SMAPI if needed (skip for commands that don't need file access)
-$bootstrapSkip = @("status", "apk-status", "apk-pull", "apk-install", "smapi-install", "help")
+$bootstrapSkip = @("status", "apk-status", "apk-pull", "apk-install", "smapi-install", "map-button", "help")
 if ($transport -and $transport.CanAdbShell -and $Command.ToLower() -notin $bootstrapSkip) {
     $bootstrapped = Invoke-Bootstrap -Transport $transport
     if ($bootstrapped) {
@@ -2356,6 +2579,7 @@ switch ($Command.ToLower()) {
     "deploy"        { Invoke-Deploy -Transport $transport }
     "logs"          { Invoke-Logs -Transport $transport }
     "launch"        { Invoke-Launch -Transport $transport }
+    "map-button"    { Invoke-MapButton -Transport $transport }
     "apk-status"    { Invoke-ApkStatus -Transport $transport }
     "apk-pull"      { Invoke-ApkPull -Transport $transport }
     "apk-install"   { Invoke-ApkInstall -Transport $transport }
