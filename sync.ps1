@@ -584,15 +584,19 @@ function Device-PullFolder {
         return $true
     }
 
-    if (-not (Test-Path $LocalDest)) {
-        New-Item -ItemType Directory -Path $LocalDest -Force | Out-Null
-    }
-
     if ($Transport.Type -eq "ADB" -and $Transport.CanAdbFiles) {
         $path = "$ADB_GAME_ROOT/" + ($Segments[$GAME_ROOT_SEGMENTS.Count..($Segments.Count-1)] -join "/")
         if ($Segments.Count -le $GAME_ROOT_SEGMENTS.Count) { $path = "$ADB_GAME_ROOT" }
+        # Ensure parent exists but remove target — adb pull nests inside existing dirs
+        $parentDir = Split-Path $LocalDest -Parent
+        if (-not (Test-Path $parentDir)) {
+            New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+        }
+        if (Test-Path $LocalDest) {
+            Remove-Item $LocalDest -Recurse -Force
+        }
         $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "SilentlyContinue"
-        $output = & $ADB pull "$path/" "$LocalDest/" 2>&1
+        $output = & $ADB pull "$path" "$LocalDest" 2>&1
         $exitCode = $LASTEXITCODE; $ErrorActionPreference = $prevEAP
         if ($exitCode -ne 0) {
             Write-Err "ADB pull failed: $output"
@@ -1391,14 +1395,22 @@ function Invoke-PushSaves {
 
     Stop-Game -Transport $Transport
 
+    # Ensure Saves directory exists on device (fresh device may not have it)
+    Device-EnsureDir -Transport $Transport -Segments $SAVES_SEGMENTS | Out-Null
+
     foreach ($localSave in Get-ChildItem $SAVES_DIR -Directory) {
         Write-Host "  Pushing: $($localSave.Name)/"
 
-        # Ensure save directory exists on device (fresh device may not have Saves/)
         $saveSegments = $SAVES_SEGMENTS + @($localSave.Name)
-        if (-not (Device-EnsureDir -Transport $Transport -Segments $saveSegments)) {
-            Write-Warn "    Could not create save directory on device, skipping"
-            continue
+
+        # MTP needs the save subdirectory to exist (can't create during push).
+        # ADB does NOT — Device-PushFolder rm's the target then adb push recreates it.
+        # Creating it for ADB causes double-nesting (adb push nests inside existing dir).
+        if ($Transport.Type -eq "MTP") {
+            if (-not (Device-EnsureDir -Transport $Transport -Segments $saveSegments)) {
+                Write-Warn "    Could not create save directory on device, skipping"
+                continue
+            }
         }
 
         Device-PushFolder -Transport $Transport -Segments $saveSegments -LocalDir $localSave.FullName | Out-Null
