@@ -2404,11 +2404,32 @@ function Invoke-Bootstrap {
 
     Write-Host ""
     Write-Warn "Tap 'Install' in the SMAPI Launcher to complete SMAPI installation."
-    Read-Host "Press Enter when done"
 
-    # 5. Launch game to create data directory
-    Write-Host "Launching game to initialize data directory..."
-    Start-Game -Transport $Transport
+    # Wait for user to tap Install — poll for "Start Game" button to appear
+    $installTimeout = 120
+    $installElapsed = 0
+    Write-Host "Waiting up to ${installTimeout}s for SMAPI install to complete..."
+    $tapCoords = $null
+    while ($installElapsed -lt $installTimeout) {
+        Start-Sleep -Seconds 5
+        $installElapsed += 5
+        $tapCoords = Find-StartGameButton -Transport $Transport
+        if ($tapCoords) {
+            Write-Success "SMAPI installed! 'Start Game' button detected at: $tapCoords"
+            Update-TapCoords -Transport $Transport -Coords $tapCoords
+            break
+        }
+        Write-Host "  ... ${installElapsed}s (waiting for 'Start Game' button)"
+    }
+
+    if (-not $tapCoords) {
+        Write-Err "Timed out waiting for SMAPI install. Tap 'Install' manually, then run '.\sync.ps1 launch'."
+        return $false
+    }
+
+    # 5. Tap "Start Game" to launch and create data directory
+    Write-Host "Tapping 'Start Game'..."
+    try { & $ADB shell input tap $tapCoords.Split(" ") 2>&1 | Out-Null } catch { }
 
     $timeout = 60
     $elapsed = 0
