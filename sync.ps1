@@ -367,6 +367,9 @@ function Detect-Transport {
     $adbModel = $null
     $adbSerial = $null
     try {
+        # Ensure ADB server is running first — cold start outputs daemon startup
+        # messages to stderr that can confuse device detection
+        & $ADB start-server 2>&1 | Out-Null
         $adbOut = & $ADB devices -l 2>&1
         foreach ($line in $adbOut) {
             if ($line -match '^(\S+)\s+device\s') {
